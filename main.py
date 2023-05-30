@@ -1,11 +1,13 @@
 import argparse
+import io
 import json
 import logging
 import os
 from dataclasses import dataclass
-from typing import List, Dict
+from typing import Dict, List
 
 import requests
+from pydub import AudioSegment
 
 
 def get_speaker_ids() -> Dict[str, int]:
@@ -44,8 +46,9 @@ def parse_file(file: str) -> List[Utterance]:
         if not line:
             continue
 
+        # Specify speaker
         if line.startswith("#"):
-            # Specify speaker
+            speaker_name = line.split("#")[1].strip()
             continue
 
         utters.append(Utterance(text=line, speaker_name=speaker_name))
@@ -57,27 +60,35 @@ def parse_file(file: str) -> List[Utterance]:
 
 def synth_voice(
     utters: List[Utterance],
-) -> bytes:
+) -> AudioSegment:
     # TODO: Support multiple speakers
     assert len(utters) > 0
-    assert all(u.speaker_name == utters[0].speaker_name for u in utters)
+    # assert all(u.speaker_name == utters[0].speaker_name for u in utters)
 
-    text = "\n".join(u.text for u in utters)
-    speaker_name = utters[0].speaker_name
-    speaker = SPEAKER_NAME_TO_ID.get(speaker_name)
+    # text = "\n".join(u.text for u in utters)
 
-    query = requests.post(
-        f"{ENDPOINT}/audio_query", params={"text": text, "speaker": speaker}
-    )
-    assert query.ok
-    voice = requests.post(
-        f"{ENDPOINT}/synthesis",
-        params={"speaker": speaker},
-        data=json.dumps(query.json()),
-    )
-    assert voice.ok
+    audio = None
 
-    return voice.content
+    for utter in utters:
+        speaker = SPEAKER_NAME_TO_ID.get(utter.speaker_name)
+
+        query = requests.post(
+            f"{ENDPOINT}/audio_query", params={"text": utter.text, "speaker": speaker}
+        )
+        assert query.ok
+        voice = requests.post(
+            f"{ENDPOINT}/synthesis",
+            params={"speaker": speaker},
+            data=json.dumps(query.json()),
+        )
+        assert voice.ok
+
+        if audio:
+            audio += AudioSegment.from_wav(io.BytesIO(voice.content))
+        else:
+            audio = AudioSegment.from_wav(io.BytesIO(voice.content))
+
+    return audio
 
 
 def main():
@@ -91,10 +102,9 @@ def main():
     utters = parse_file(args.file)
     voice = synth_voice(utters)
 
-    with open(args.output, mode="wb") as f:
-        f.write(voice)
+    voice.export(args.output, format="wav")
 
-    logging.info(f"Output: {args.output} ({len(voice)} bytes)")
+    logging.info(f"Output: {args.output} ({len(voice.raw_data)} bytes)")
 
 
 if __name__ == "__main__":
