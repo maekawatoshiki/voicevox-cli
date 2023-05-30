@@ -32,8 +32,9 @@ def parse_file(file: str) -> List[str]:
 
 
 def synth_voice(
-    utters: List[str], speaker: int = 1, output_path: str = "test.wav"
-) -> None:
+    utters: List[str],
+    speaker: int = 1,
+) -> bytes:
     text = "\n".join(utters)
 
     query = requests.post(
@@ -45,10 +46,7 @@ def synth_voice(
         data=json.dumps(query.json()),
     )
 
-    with open(output_path, mode="wb") as f:
-        f.write(voice.content)
-
-    logging.info(f"Output: {output_path}")
+    return voice.content
 
 
 def main():
@@ -60,7 +58,12 @@ def main():
     args = parser.parse_args()
 
     utters = parse_file(args.file)
-    synth_voice(utters, output_path=args.output)
+    voice = synth_voice(utters)
+
+    with open(args.output, mode="wb") as f:
+        f.write(voice)
+
+    logging.info(f"Output: {args.output} ({len(voice)} bytes)")
 
 
 if __name__ == "__main__":
