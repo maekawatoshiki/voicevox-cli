@@ -1,0 +1,13 @@
+[project]
+name = "voicevox-cli"
+version = "0.1.0"
+dependencies = ["requests~=2.31.0"]
+requires-python = ">= 3.10"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.rye]
+managed = true
+dev-dependencies = ["pip~=23.1.2"]
