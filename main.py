@@ -1,8 +1,10 @@
 import argparse
+import asyncio
 import io
 import json
 import logging
 import os
+import time
 from dataclasses import dataclass
 from typing import Dict, List
 
@@ -29,6 +31,7 @@ SPEAKER_NAME_TO_ID: Dict[str, int] = get_speaker_ids()
 
 @dataclass
 class Utterance:
+    id: int
     text: str
     speaker_name: str
 
@@ -51,42 +54,52 @@ def parse_file(file: str) -> List[Utterance]:
             speaker_name = line.split("#")[1].strip()
             continue
 
-        utters.append(Utterance(text=line, speaker_name=speaker_name))
+        utters.append(Utterance(id=len(utters), text=line, speaker_name=speaker_name))
 
     logging.info(f"{len(utters)} utterances detected")
 
     return utters
 
 
+def synth_voice_sub(
+    utter: Utterance,
+) -> AudioSegment:
+    speaker = SPEAKER_NAME_TO_ID.get(utter.speaker_name)
+
+    query = requests.post(
+        f"{ENDPOINT}/audio_query", params={"text": utter.text, "speaker": speaker}
+    )
+    assert query.ok
+    voice = requests.post(
+        f"{ENDPOINT}/synthesis",
+        params={"speaker": speaker},
+        data=json.dumps(query.json()),
+    )
+    assert voice.ok
+
+    audio = AudioSegment.from_wav(io.BytesIO(voice.content))
+
+    logging.info(f"synth_voice_sub: Synthesized id={utter.id} ({len(audio.raw_data)} bytes)")
+
+    return audio
+
+
 def synth_voice(
     utters: List[Utterance],
 ) -> AudioSegment:
-    # TODO: Support multiple speakers
-    assert len(utters) > 0
-    # assert all(u.speaker_name == utters[0].speaker_name for u in utters)
+    start = time.time()
 
-    # text = "\n".join(u.text for u in utters)
+    async def run(loop):
+        async def run_req(utter: Utterance):
+            return await loop.run_in_executor(None, synth_voice_sub, utter)
 
-    audio = None
+        tasks = [run_req(utter) for utter in utters]
+        return await asyncio.gather(*tasks)
 
-    for utter in utters:
-        speaker = SPEAKER_NAME_TO_ID.get(utter.speaker_name)
+    loop = asyncio.get_event_loop()
+    audio = sum(loop.run_until_complete(run(loop)))
 
-        query = requests.post(
-            f"{ENDPOINT}/audio_query", params={"text": utter.text, "speaker": speaker}
-        )
-        assert query.ok
-        voice = requests.post(
-            f"{ENDPOINT}/synthesis",
-            params={"speaker": speaker},
-            data=json.dumps(query.json()),
-        )
-        assert voice.ok
-
-        if audio:
-            audio += AudioSegment.from_wav(io.BytesIO(voice.content))
-        else:
-            audio = AudioSegment.from_wav(io.BytesIO(voice.content))
+    logging.info(f"synth_voice: elapsed: {time.time() - start:.2f} [s]")
 
     return audio
 
