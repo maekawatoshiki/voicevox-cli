@@ -2,18 +2,42 @@ import argparse
 import json
 import logging
 import os
-from typing import List
+from dataclasses import dataclass
+from typing import List, Dict
 
 import requests
 
+
+def get_speaker_ids() -> Dict[str, int]:
+    speakers = requests.get(f"{ENDPOINT}/speakers")
+    assert speakers.ok
+
+    speaker_name_to_id = {}
+
+    for speaker in speakers.json():
+        for style in speaker["styles"]:
+            speaker_name_to_id[f"{speaker['name']}:{style['name']}"] = style["id"]
+
+    return speaker_name_to_id
+
+
 ENDPOINT: str = os.getenv("VVCLI_ENDPOINT", default="127.0.0.1:50021")
+SPEAKER_NAME_TO_ID: Dict[str, int] = get_speaker_ids()
 
 
-def parse_file(file: str) -> List[str]:
+@dataclass
+class Utterance:
+    text: str
+    speaker_name: str
+
+
+def parse_file(file: str) -> List[Utterance]:
     with open(file, "r") as f:
         lines = f.readlines()
 
+    speaker_name = "ずんだもん:ノーマル"
     utters = []
+
     for line in lines:
         line = line.strip()
 
@@ -24,7 +48,7 @@ def parse_file(file: str) -> List[str]:
             # Specify speaker
             continue
 
-        utters.append(line)
+        utters.append(Utterance(text=line, speaker_name=speaker_name))
 
     logging.info(f"{len(utters)} utterances detected")
 
@@ -32,19 +56,26 @@ def parse_file(file: str) -> List[str]:
 
 
 def synth_voice(
-    utters: List[str],
-    speaker: int = 1,
+    utters: List[Utterance],
 ) -> bytes:
-    text = "\n".join(utters)
+    # TODO: Support multiple speakers
+    assert len(utters) > 0
+    assert all(u.speaker_name == utters[0].speaker_name for u in utters)
+
+    text = "\n".join(u.text for u in utters)
+    speaker_name = utters[0].speaker_name
+    speaker = SPEAKER_NAME_TO_ID.get(speaker_name)
 
     query = requests.post(
         f"{ENDPOINT}/audio_query", params={"text": text, "speaker": speaker}
     )
+    assert query.ok
     voice = requests.post(
         f"{ENDPOINT}/synthesis",
         params={"speaker": speaker},
         data=json.dumps(query.json()),
     )
+    assert voice.ok
 
     return voice.content
 
